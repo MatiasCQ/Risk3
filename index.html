@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>RISK – Dominación Mundial</title>
+<title>RISK – Dominación Mundial Online</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #050d1a; color: #fff; font-family: Arial, sans-serif; overflow-x: hidden; }
@@ -21,8 +21,7 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useCallback } = React;
 
-// ─── CONSTANTS ───────────────────────────────────────────────────────────────
-
+// ─── CONSTANTS ─────────────────────────────────────────────────────────
 const PLAYER_COLORS = ["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c"];
 const COLOR_NAMES = {"#e74c3c":"Rojo","#3498db":"Azul","#2ecc71":"Verde","#f39c12":"Naranja","#9b59b6":"Morado","#1abc9c":"Turquesa"};
 
@@ -118,13 +117,13 @@ const NEIGHBORS = {
 };
 
 const CONTINENT_SHAPES = {
-  north_america:[[50,92],[68,62],[80,52],[132,50],[162,56],[208,46],[262,36],[302,40],[312,58],[298,98],[286,148],[284,208],[265,232],[235,248],[208,250],[195,260],[182,270],[164,264],[148,244],[128,218],[105,202],[62,178],[50,148],[50,92]],
+  north_america:[[50,92],[68,62],[80,52],[132,50],[162,56],[208,46],[262,36],[302,40],[312,58],[298,98],[286,148],[284,208],[265,232],[235,248],[208,250],[195,260],[182,270],[164,264],[148,244],[120,254],[98,240],[75,220],[68,192],[70,140],[50,92]],
   south_america:[[192,266],[250,254],[312,258],[326,302],[323,356],[308,412],[286,458],[262,470],[240,460],[224,430],[210,392],[196,356],[190,306],[192,266]],
   europe_main:[[392,82],[416,66],[470,62],[538,78],[550,108],[542,148],[526,174],[492,188],[470,194],[448,178],[426,184],[408,170],[392,156],[386,128],[388,98],[392,82]],
   iceland:[[370,60],[396,52],[418,60],[414,80],[388,87],[372,78],[370,60]],
   africa:[[390,208],[432,198],[494,198],[570,192],[592,212],[582,268],[567,315],[564,370],[550,422],[516,442],[480,437],[458,412],[460,370],[455,355],[452,332],[422,288],[390,260],[390,208]],
   madagascar:[[543,378],[560,372],[572,385],[568,408],[552,415],[538,405],[540,382],[543,378]],
-  asia:[[535,66],[612,48],[698,44],[780,48],[840,66],[860,98],[848,148],[830,182],[815,202],[752,232],[728,258],[728,284],[715,300],[702,282],[688,270],[660,270],[640,240],[622,230],[600,228],[578,228],[570,218],[568,192],[548,178],[542,155],[540,118],[535,88],[535,66]],
+  asia:[[535,66],[612,48],[698,44],[780,48],[840,66],[860,98],[848,148],[830,182],[815,202],[752,232],[728,258],[728,284],[715,300],[702,282],[688,270],[660,270],[640,240],[622,230],[600,228],[572,210],[542,188],[520,168],[515,88],[535,66]],
   japan:[[795,142],[812,136],[825,148],[820,168],[806,172],[796,160],[795,142]],
   australia_main:[[700,298],[732,286],[800,280],[860,283],[870,308],[858,348],[842,388],[820,410],[780,420],[750,422],[716,410],[703,385],[696,348],[700,298]],
   new_guinea:[[758,272],[798,265],[830,275],[825,298],[796,305],[760,298],[758,272]],
@@ -136,8 +135,67 @@ const CONTINENT_BLOB_COLORS = {
   australia_main:"#1abc9c",new_guinea:"#1abc9c",
 };
 
-// ─── UTILS ────────────────────────────────────────────────────────────────────
+// ─── ONLINE SYSTEM ─────────────────────────────────────────────────────
+class OnlineRoomManager {
+  constructor() {
+    this.rooms = {};
+    this.listeners = [];
+  }
 
+  createRoom(roomId) {
+    if (!this.rooms[roomId]) {
+      this.rooms[roomId] = { id: roomId, players: [], gameState: null, host: null };
+      this.notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
+  joinRoom(roomId, playerId, playerName) {
+    if (this.rooms[roomId] && this.rooms[roomId].players.length < 6) {
+      this.rooms[roomId].players.push({ id: playerId, name: playerName });
+      this.notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
+  getRooms() {
+    return Object.values(this.rooms).filter(r => r.players.length > 0);
+  }
+
+  leaveRoom(roomId, playerId) {
+    if (this.rooms[roomId]) {
+      this.rooms[roomId].players = this.rooms[roomId].players.filter(p => p.id !== playerId);
+      if (this.rooms[roomId].players.length === 0) {
+        delete this.rooms[roomId];
+      }
+      this.notifyListeners();
+    }
+  }
+
+  updateGameState(roomId, gameState) {
+    if (this.rooms[roomId]) {
+      this.rooms[roomId].gameState = gameState;
+      this.notifyListeners();
+    }
+  }
+
+  subscribe(callback) {
+    this.listeners.push(callback);
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== callback);
+    };
+  }
+
+  notifyListeners() {
+    this.listeners.forEach(cb => cb());
+  }
+}
+
+const roomManager = new OnlineRoomManager();
+
+// ─── UTILS ──────────────────────────────────────────────────────────
 function rollDie() { return Math.floor(Math.random() * 6) + 1; }
 
 function rollDice(n) { return Array.from({length: n}, rollDie).sort((a,b)=>b-a); }
@@ -208,7 +266,6 @@ function initGame(players) {
   shuffled.forEach((tid,i)=>{
     territories[tid]={id:tid, owner:players[i%players.length].id, armies:1};
   });
-  // distribute starting armies
   const extraArmies = {2:40,3:35,4:30,5:25,6:20}[players.length]||20;
   players.forEach(p=>{
     let extra = extraArmies - Object.values(territories).filter(t=>t.owner===p.id).length;
@@ -234,8 +291,7 @@ function initGame(players) {
   };
 }
 
-// ─── SVG MAP ─────────────────────────────────────────────────────────────────
-
+// ─── SVG MAP ──────────────────────────────────────────────────────────
 function WorldMapSvg({ gameState, selectedFrom, selectedTo, onTerritoryClick }) {
   const {territories, players} = gameState;
   const territoryMap={};
@@ -323,8 +379,7 @@ function WorldMapSvg({ gameState, selectedFrom, selectedTo, onTerritoryClick }) 
   );
 }
 
-// ─── DICE ─────────────────────────────────────────────────────────────────────
-
+// ─── DICE ───────────────────────────────────────────────────────────
 function Die({value, color}) {
   const dots = {
     1:[[50,50]],2:[[25,25],[75,75]],3:[[25,25],[50,50],[75,75]],
@@ -339,8 +394,7 @@ function Die({value, color}) {
   );
 }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
-
+// ─── STYLES ──────────────────────────────────────────────────────────
 const btn = (bg, hl) => ({
   background:`linear-gradient(180deg,${hl} 0%,${bg} 100%)`,
   color:"#fff",border:`1px solid ${hl}66`,borderRadius:"8px",
@@ -360,9 +414,8 @@ const smBtn = {
 
 const phaseLabel = p=>({reinforce:"Refuerzo",attack:"Ataque",fortify:"Fortalecer",ended:"FIN"})[p]||p;
 
-// ─── SCREENS ─────────────────────────────────────────────────────────────────
-
-function HomeScreen({onStart}) {
+// ─── SCREENS ──────────────────────────────────────────────────────────
+function HomeScreen({onStart, onOnline}) {
   return (
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#050d1a 0%,#0d2137 50%,#051020 100%)"}}>
       <div style={{textAlign:"center",padding:"40px 20px"}}>
@@ -371,9 +424,14 @@ function HomeScreen({onStart}) {
           <div style={{color:"rgba(255,215,0,0.7)",fontSize:"18px",fontFamily:"Georgia,serif",marginTop:"8px"}}>DOMINACIÓN MUNDIAL</div>
         </div>
         <p style={{color:"#aabbcc",fontSize:"15px",marginBottom:"36px",letterSpacing:"3px"}}>CONQUISTA EL MUNDO</p>
-        <button onClick={onStart} style={{...btn("#8B0000","#cc2200"),fontSize:"18px",padding:"14px 40px",width:"auto"}}>
-          ⚔️ Jugar
-        </button>
+        <div style={{display:"flex",gap:"12px",justifyContent:"center",flexWrap:"wrap"}}>
+          <button onClick={onStart} style={{...btn("#8B0000","#cc2200"),fontSize:"18px",padding:"14px 40px",width:"auto"}}>
+            ⚔️ Jugar
+          </button>
+          <button onClick={onOnline} style={{...btn("#003366","#1a7ccc"),fontSize:"18px",padding:"14px 40px",width:"auto"}}>
+            🌐 Online
+          </button>
+        </div>
         <div style={{marginTop:"36px",display:"flex",gap:"18px",justifyContent:"center",flexWrap:"wrap"}}>
           {PLAYER_COLORS.map(c=>(
             <div key={c} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:"4px"}}>
@@ -381,6 +439,77 @@ function HomeScreen({onStart}) {
               <span style={{color:"#556677",fontSize:"10px"}}>{COLOR_NAMES[c]}</span>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OnlineHomeScreen({onBack, onCreateRoom, onJoinRoom}) {
+  const [playerName, setPlayerName] = useState("");
+  const [roomId, setRoomId] = useState("");
+  const [rooms, setRooms] = useState([]);
+
+  useEffect(() => {
+    const unsub = roomManager.subscribe(() => {
+      setRooms(roomManager.getRooms());
+    });
+    setRooms(roomManager.getRooms());
+    return unsub;
+  }, []);
+
+  const handleCreateRoom = () => {
+    if (!playerName.trim()) { alert("Ingresa tu nombre"); return; }
+    if (!roomId.trim()) { alert("Ingresa un ID de sala"); return; }
+    if (roomManager.createRoom(roomId)) {
+      onCreateRoom(playerName, roomId);
+    } else {
+      alert("Sala ya existe");
+    }
+  };
+
+  const handleJoinRoom = (room) => {
+    if (!playerName.trim()) { alert("Ingresa tu nombre"); return; }
+    if (roomManager.joinRoom(room.id, "p"+Date.now(), playerName)) {
+      onJoinRoom(playerName, room.id);
+    } else {
+      alert("No puedes unirte a esta sala");
+    }
+  };
+
+  return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px",background:"linear-gradient(135deg,#050d1a 0%,#0d2137 100%)"}}>
+      <div style={{background:"rgba(0,0,0,0.8)",border:"2px solid rgba(255,215,0,0.4)",borderRadius:"16px",padding:"32px",maxWidth:"500px",width:"100%"}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#556677",cursor:"pointer",fontSize:"13px",padding:0,marginBottom:"16px"}}>← Volver</button>
+        <h2 style={{color:"#FFD700",fontSize:"26px",fontFamily:"Georgia,serif",textAlign:"center",marginBottom:"24px"}}>🌐 Modo Online</h2>
+        
+        <input value={playerName} onChange={e=>setPlayerName(e.target.value)} maxLength={20} placeholder="Tu nombre"
+          style={{...inp,marginBottom:"12px"}}/>
+        
+        <div style={{marginBottom:"16px"}}>
+          <p style={{color:"#aabbcc",fontSize:"12px",marginBottom:"8px"}}>Crear Sala (1-4):</p>
+          <div style={{display:"flex",gap:"8px"}}>
+            <input value={roomId} onChange={e=>setRoomId(e.target.value)} placeholder="ID de sala" maxLength={2}
+              style={{...inp,flex:1}}/>
+            <button onClick={handleCreateRoom} style={{...btn("#226600","#33aa00"),width:"auto",padding:"10px 20px"}}>Crear</button>
+          </div>
+        </div>
+
+        <div style={{borderTop:"1px solid #334455",paddingTop:"16px"}}>
+          <p style={{color:"#aabbcc",fontSize:"12px",marginBottom:"8px"}}>Salas disponibles ({rooms.length}/4):</p>
+          {rooms.length > 0 ? (
+            rooms.map((room,i) => (
+              <div key={i} style={{background:"rgba(255,215,0,0.08)",border:"1px solid rgba(255,215,0,0.2)",borderRadius:"8px",padding:"10px",marginBottom:"8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <p style={{color:"#FFD700",fontSize:"14px",fontWeight:"bold"}}>Sala {room.id}</p>
+                  <p style={{color:"#888",fontSize:"11px"}}>{room.players.length} jugadores</p>
+                </div>
+                <button onClick={() => handleJoinRoom(room)} style={{...btn("#003366","#1a7ccc"),width:"auto",padding:"6px 16px",fontSize:"12px"}}>Unirse</button>
+              </div>
+            ))
+          ) : (
+            <p style={{color:"#556677",fontSize:"12px"}}>No hay salas disponibles</p>
+          )}
         </div>
       </div>
     </div>
@@ -434,8 +563,7 @@ function SetupScreen({onStart, onBack}) {
   );
 }
 
-// ─── GAME LOGIC ───────────────────────────────────────────────────────────────
-
+// ─── GAME LOGIC ─────────────────────────────────────────────────────────
 function nextTurn(gs) {
   const alive = gs.turnOrder.filter(pid=>Object.values(gs.territories).some(t=>t.owner===pid));
   if(alive.length<=1) {
@@ -514,8 +642,6 @@ function applyFortify(gs, fromT, toT, armies) {
   return nextTurn({...gs,territories});
 }
 
-// ─── ATTACK RESULT PANEL ─────────────────────────────────────────────────────
-
 function AttackResultPanel({result}) {
   return (
     <div style={{background:"rgba(100,0,0,0.2)",border:"1px solid #cc2200",borderRadius:"8px",padding:"10px"}}>
@@ -562,9 +688,7 @@ function AttackResultPanel({result}) {
   );
 }
 
-// ─── GAME SCREEN ─────────────────────────────────────────────────────────────
-
-function GameScreen({initialPlayers, onBack}) {
+function GameScreen({initialPlayers, onBack, isOnline = false, roomId = null}) {
   const [gs, setGs] = useState(()=>initGame(initialPlayers));
   const [selectedFrom, setSelectedFrom] = useState(null);
   const [selectedTo, setSelectedTo] = useState(null);
@@ -574,7 +698,6 @@ function GameScreen({initialPlayers, onBack}) {
 
   const currentPlayer = gs.players.find(p=>p.id===gs.currentPlayer);
 
-  // Show turn banner on player change
   useEffect(()=>{
     setShowTurnBanner(true);
     setSelectedFrom(null);
@@ -584,6 +707,12 @@ function GameScreen({initialPlayers, onBack}) {
     const t = setTimeout(()=>setShowTurnBanner(false),2500);
     return ()=>clearTimeout(t);
   },[gs.currentPlayer]);
+
+  useEffect(() => {
+    if (isOnline && roomId) {
+      roomManager.updateGameState(roomId, gs);
+    }
+  }, [gs, isOnline, roomId]);
 
   const handleTerritoryClick = (clicked) => {
     if(gs.phase==="ended") return;
@@ -655,20 +784,20 @@ function GameScreen({initialPlayers, onBack}) {
   return (
     <div style={{background:"#050d1a",minHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"Arial,sans-serif",position:"relative"}}>
 
-      {/* Turn Banner */}
       {showTurnBanner&&gs.phase!=="ended"&&(
         <div style={{position:"fixed",inset:0,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,background:"rgba(0,0,0,0.75)",pointerEvents:"none"}}>
-          <div style={{background:`linear-gradient(135deg,${currentPlayer?.color||"#FFD700"}22,rgba(0,0,0,0.9))`,border:`2px solid ${currentPlayer?.color||"#FFD700"}`,borderRadius:"20px",padding:"28px 48px",textAlign:"center"}}>
+          <div style={{background:`linear-gradient(135deg,${currentPlayer?.color||"#FFD700"}22,rgba(0,0,0,0.9))`,border:`2px solid ${currentPlayer?.color||"#FFD700"}`,borderRadius:"20px",padding:"32px 48px",textAlign:"center"}}>
             <p style={{color:"#aabbcc",fontSize:"13px",letterSpacing:"2px",marginBottom:"8px"}}>TURNO DE</p>
             <p style={{color:currentPlayer?.color||"#FFD700",fontSize:"32px",fontWeight:"bold",fontFamily:"Georgia,serif"}}>{currentPlayer?.name||"?"}</p>
             <p style={{color:"#556677",fontSize:"12px",marginTop:"8px"}}>Fase: {phaseLabel(gs.phase)}</p>
+            {isOnline && <p style={{color:"#88aaff",fontSize:"10px",marginTop:"6px"}}>🌐 Sala: {roomId}</p>}
           </div>
         </div>
       )}
 
-      {/* Header */}
       <div style={{background:"rgba(0,0,0,0.92)",borderBottom:"2px solid #FFD70055",padding:"7px 14px",display:"flex",alignItems:"center",gap:"14px",flexWrap:"wrap",flexShrink:0}}>
         <span style={{color:"#FFD700",fontFamily:"Georgia,serif",fontSize:"20px",fontWeight:"bold"}}>RISK</span>
+        {isOnline && <span style={{color:"#88aaff",fontSize:"12px"}}>🌐 Online - {roomId}</span>}
         <div style={{display:"flex",gap:"5px",alignItems:"center",flexWrap:"wrap",flex:1}}>
           {gs.players.map(p=>{
             const tCount=Object.values(gs.territories).filter(t=>t.owner===p.id).length;
@@ -686,31 +815,26 @@ function GameScreen({initialPlayers, onBack}) {
       </div>
 
       <div style={{display:"flex",flex:1,overflow:"hidden",minHeight:0}}>
-        {/* Map */}
         <div style={{flex:1,overflow:"hidden",background:"#050d1a"}}>
           <WorldMapSvg gameState={gs} selectedFrom={selectedFrom} selectedTo={selectedTo} onTerritoryClick={handleTerritoryClick}/>
         </div>
 
-        {/* Sidebar */}
-        <div style={{width:"270px",minWidth:"270px",background:"rgba(2,8,18,0.97)",borderLeft:"1px solid #FFD70033",display:"flex",flexDirection:"column",padding:"12px",gap:"9px",overflowY:"auto"}}>
+        <div style={{width:"270px",minWidth:"270px",background:"rgba(2,8,18,0.97)",borderLeft:"1px solid #FFD70033",display:"flex",flexDirection:"column",padding:"12px",gap:"9px",overflowY:"auto",maxHeight:"100%"}}>
 
-          {/* Phase info */}
           <div style={{background:`${currentPlayer?.color||"#FFD700"}18`,border:`1px solid ${currentPlayer?.color||"#FFD700"}44`,borderRadius:"8px",padding:"9px"}}>
             <p style={{color:"#FFD700",fontSize:"10px",fontWeight:"bold",marginBottom:"2px",textTransform:"uppercase",letterSpacing:"1px"}}>Fase: {phaseLabel(gs.phase)}</p>
             <p style={{color:currentPlayer?.color||"#fff",fontSize:"13px",fontWeight:"bold"}}>{currentPlayer?.name||"?"}</p>
             <p style={{color:"#88aacc",fontSize:"10px",marginTop:"3px"}}>{gs.message}</p>
           </div>
 
-          {/* Winner */}
           {gs.winner&&(
             <div style={{background:"rgba(255,215,0,0.12)",border:"2px solid #FFD700",borderRadius:"10px",padding:"14px",textAlign:"center"}}>
               <p style={{color:"#FFD700",fontSize:"20px",fontWeight:"bold",fontFamily:"Georgia,serif"}}>🏆 VICTORIA!</p>
               <p style={{color:"#fff",fontSize:"14px",marginTop:"4px"}}>{gs.players.find(p=>p.id===gs.winner)?.name}</p>
-              <button onClick={onBack} style={{...btn("#8B0000","#cc2200"),marginTop:"10px",padding:"8px 16px",fontSize:"13px"}}>Volver al inicio</button>
+              <button onClick={onBack} style={{...btn("#8B0000","#cc2200"),marginTop:"10px",padding:"8px 16px",fontSize:"13px"}}>Volver</button>
             </div>
           )}
 
-          {/* Actions */}
           {!gs.winner&&(
             <div style={{display:"flex",flexDirection:"column",gap:"7px"}}>
 
@@ -734,7 +858,7 @@ function GameScreen({initialPlayers, onBack}) {
 
               {gs.phase==="attack"&&<>
                 {!selectedFrom&&<p style={{color:"#556677",fontSize:"11px"}}>Clic en un territorio tuyo (2+ ejércitos) para atacar</p>}
-                {selectedFrom&&!selectedTo&&<p style={{color:"#aabbcc",fontSize:"11px"}}>Desde: <strong style={{color:"#FFD700"}}>{TERRITORY_POSITIONS[selectedFrom]?.label}</strong><br/>Clic en un enemigo adyacente</p>}
+                {selectedFrom&&!selectedTo&&<p style={{color:"#aabbcc",fontSize:"11px"}}>Desde: <strong style={{color:"#FFD700"}}>{TERRITORY_POSITIONS[selectedFrom]?.label}</strong></p>}
                 {selectedFrom&&selectedTo&&<>
                   <p style={{color:"#ccc",fontSize:"11px"}}>
                     <strong style={{color:"#FFD700"}}>{TERRITORY_POSITIONS[selectedFrom]?.label}</strong>
@@ -751,7 +875,7 @@ function GameScreen({initialPlayers, onBack}) {
 
               {gs.phase==="fortify"&&<>
                 {!selectedFrom&&<p style={{color:"#556677",fontSize:"11px"}}>Opcional: mueve ejércitos entre territorios adyacentes</p>}
-                {selectedFrom&&!selectedTo&&<p style={{color:"#aabbcc",fontSize:"11px"}}>Desde: <strong style={{color:"#FFD700"}}>{TERRITORY_POSITIONS[selectedFrom]?.label}</strong><br/>Selecciona territorio adyacente tuyo</p>}
+                {selectedFrom&&!selectedTo&&<p style={{color:"#aabbcc",fontSize:"11px"}}>Desde: <strong style={{color:"#FFD700"}}>{TERRITORY_POSITIONS[selectedFrom]?.label}</strong></p>}
                 {selectedFrom&&selectedTo&&(()=>{
                   const max=(fromT?.armies||1)-1;
                   return <>
@@ -773,10 +897,8 @@ function GameScreen({initialPlayers, onBack}) {
             </div>
           )}
 
-          {/* Attack result */}
           {gs.attackResult&&<AttackResultPanel result={gs.attackResult}/>}
 
-          {/* Player stats */}
           <div style={{marginTop:"auto",borderTop:"1px solid #112233",paddingTop:"9px"}}>
             <p style={{color:"#334455",fontSize:"9px",marginBottom:"5px",textTransform:"uppercase",letterSpacing:"1px"}}>Territorios / Ejércitos</p>
             {gs.players.map(p=>{
@@ -798,15 +920,52 @@ function GameScreen({initialPlayers, onBack}) {
   );
 }
 
-// ─── APP ROOT ─────────────────────────────────────────────────────────────────
-
+// ─── APP ROOT ─────────────────────────────────────────────────────────
 function App() {
   const [screen, setScreen] = useState("home");
   const [players, setPlayers] = useState(null);
+  const [onlineRoom, setOnlineRoom] = useState(null);
 
-  if(screen==="home") return <HomeScreen onStart={()=>setScreen("setup")}/>;
-  if(screen==="setup") return <SetupScreen onStart={ps=>{setPlayers(ps);setScreen("game");}} onBack={()=>setScreen("home")}/>;
-  if(screen==="game"&&players) return <GameScreen initialPlayers={players} onBack={()=>{setPlayers(null);setScreen("home");}}/>;
+  if(screen==="home") return <HomeScreen 
+    onStart={()=>setScreen("setup")}
+    onOnline={()=>setScreen("online-home")}
+  />;
+  
+  if(screen==="online-home") return <OnlineHomeScreen 
+    onBack={()=>setScreen("home")}
+    onCreateRoom={(name, roomId)=>{
+      setOnlineRoom({name, roomId});
+      setScreen("online-game");
+    }}
+    onJoinRoom={(name, roomId)=>{
+      setOnlineRoom({name, roomId});
+      setScreen("online-game");
+    }}
+  />;
+  
+  if(screen==="setup") return <SetupScreen 
+    onStart={ps=>{setPlayers(ps);setScreen("game");}} 
+    onBack={()=>setScreen("home")}
+  />;
+  
+  if(screen==="game"&&players) return <GameScreen 
+    initialPlayers={players} 
+    onBack={()=>{setPlayers(null);setScreen("home");}}
+  />;
+  
+  if(screen==="online-game"&&onlineRoom) return <GameScreen 
+    initialPlayers={[
+      {id:"p0",name:onlineRoom.name,color:PLAYER_COLORS[0]}
+    ]}
+    onBack={()=>{
+      roomManager.leaveRoom(onlineRoom.roomId, "p0");
+      setOnlineRoom(null);
+      setScreen("home");
+    }}
+    isOnline={true}
+    roomId={onlineRoom.roomId}
+  />;
+  
   return null;
 }
 
