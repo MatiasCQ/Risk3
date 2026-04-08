@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>RISK – Dominación Mundial P2P</title>
+<title>RISK – Dominación Mundial Online</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #050d1a; color: #fff; font-family: Arial, sans-serif; overflow-x: hidden; }
@@ -15,14 +15,9 @@
 </head>
 <body>
 <div id="root"></div>
-
-<!-- PeerJS Library -->
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.1/dist/peerjs.min.js"></script>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useCallback } = React;
 
@@ -140,134 +135,126 @@ const CONTINENT_BLOB_COLORS = {
   australia_main:"#1abc9c",new_guinea:"#1abc9c",
 };
 
-// ─── P2P MANAGER ──────────────────────────────────────────────────────
-class P2PManager {
+// ─── ONLINE SYSTEM CON LOCALSTORAGE ─────────────────────────────────────
+class OnlineRoomManager {
   constructor() {
-    this.peer = null;
-    this.peerId = null;
-    this.connections = new Map();
-    this.messageListeners = [];
-    this.statusListeners = [];
-    this.initPeer();
+    this.listeners = [];
+    this.initializeRooms();
+    // Sincronizar con cambios en otras pestañas/dispositivos
+    this.startPolling();
   }
 
-  initPeer() {
-    this.peer = new Peer({
-      config: {
-        iceServers: [
-          { urls: ['stun:stun.l.google.com:19302'] },
-          { urls: ['stun:stun1.l.google.com:19302'] }
-        ]
-      }
-    });
-
-    this.peer.on('open', (id) => {
-      this.peerId = id;
-      console.log('Mi ID:', id);
-      this.notifyStatus('open');
-    });
-
-    this.peer.on('connection', (conn) => {
-      this.handleConnection(conn);
-    });
-
-    this.peer.on('error', (err) => {
-      console.error('Error Peer:', err);
-      this.notifyStatus('error', err.message);
-    });
-  }
-
-  handleConnection(conn) {
-    const peerId = conn.peer;
-    this.connections.set(peerId, conn);
-
-    conn.on('data', (data) => {
-      this.notifyMessage(peerId, data);
-    });
-
-    conn.on('open', () => {
-      this.notifyStatus('peer-connected', peerId);
-    });
-
-    conn.on('close', () => {
-      this.connections.delete(peerId);
-      this.notifyStatus('peer-disconnected', peerId);
-    });
-
-    conn.on('error', (err) => {
-      console.error('Error conexión:', err);
-    });
-  }
-
-  connect(remotePeerId) {
-    if (this.connections.has(remotePeerId)) {
-      return this.connections.get(remotePeerId);
+  initializeRooms() {
+    const stored = localStorage.getItem("risk_rooms");
+    if (!stored) {
+      localStorage.setItem("risk_rooms", JSON.stringify({
+        "1": { id: "1", players: [], host: null, status: "waiting" },
+        "2": { id: "2", players: [], host: null, status: "waiting" },
+        "3": { id: "3", players: [], host: null, status: "waiting" },
+        "4": { id: "4", players: [], host: null, status: "waiting" }
+      }));
     }
-
-    const conn = this.peer.connect(remotePeerId);
-    this.handleConnection(conn);
-    return conn;
   }
 
-  send(peerId, data) {
-    if (peerId === 'broadcast') {
-      this.connections.forEach((conn) => {
-        if (conn.open) {
-          conn.send(data);
+  getRoomsData() {
+    const stored = localStorage.getItem("risk_rooms");
+    return stored ? JSON.parse(stored) : {};
+  }
+
+  saveRoomsData(rooms) {
+    localStorage.setItem("risk_rooms", JSON.stringify(rooms));
+    this.notifyListeners();
+  }
+
+  createRoom(roomId, hostId, hostName) {
+    const rooms = this.getRoomsData();
+    if (rooms[roomId] && rooms[roomId].players.length === 0) {
+      rooms[roomId] = { 
+        id: roomId, 
+        players: [{id: hostId, name: hostName, isHost: true}], 
+        host: hostId,
+        status: "waiting"
+      };
+      this.saveRoomsData(rooms);
+      return true;
+    }
+    return false;
+  }
+
+  joinRoom(roomId, playerId, playerName) {
+    const rooms = this.getRoomsData();
+    if (rooms[roomId] && rooms[roomId].players.length < 6 && rooms[roomId].status === "waiting") {
+      const exists = rooms[roomId].players.some(p => p.id === playerId);
+      if (!exists) {
+        rooms[roomId].players.push({ id: playerId, name: playerName, isHost: false });
+        this.saveRoomsData(rooms);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getAllRooms() {
+    return Object.values(this.getRoomsData());
+  }
+
+  getRoomDetails(roomId) {
+    return this.getRoomsData()[roomId];
+  }
+
+  leaveRoom(roomId, playerId) {
+    const rooms = this.getRoomsData();
+    if (rooms[roomId]) {
+      const wasHost = rooms[roomId].host === playerId;
+      rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== playerId);
+      
+      if (wasHost) {
+        if (rooms[roomId].players.length > 0) {
+          rooms[roomId].players[0].isHost = true;
+          rooms[roomId].host = rooms[roomId].players[0].id;
+        } else {
+          rooms[roomId].host = null;
+          rooms[roomId].status = "waiting";
         }
-      });
-    } else {
-      const conn = this.connections.get(peerId);
-      if (conn && conn.open) {
-        conn.send(data);
       }
+      this.saveRoomsData(rooms);
     }
   }
 
-  broadcast(data) {
-    this.connections.forEach((conn) => {
-      if (conn.open) {
-        conn.send(data);
-      }
-    });
+  removePlayer(roomId, playerId) {
+    this.leaveRoom(roomId, playerId);
   }
 
-  subscribeToBroadcast(callback) {
-    this.messageListeners.push(callback);
-    return () => {
-      this.messageListeners = this.messageListeners.filter(l => l !== callback);
-    };
-  }
-
-  subscribeToStatus(callback) {
-    this.statusListeners.push(callback);
-    return () => {
-      this.statusListeners = this.statusListeners.filter(l => l !== callback);
-    };
-  }
-
-  notifyMessage(peerId, data) {
-    this.messageListeners.forEach(cb => cb(peerId, data));
-  }
-
-  notifyStatus(status, data) {
-    this.statusListeners.forEach(cb => cb(status, data));
-  }
-
-  getConnectedPeers() {
-    return Array.from(this.connections.keys());
-  }
-
-  disconnect() {
-    this.connections.forEach(conn => conn.close());
-    this.connections.clear();
-    if (this.peer) {
-      this.peer.destroy();
+  startGame(roomId) {
+    const rooms = this.getRoomsData();
+    if (rooms[roomId]) {
+      rooms[roomId].status = "started";
+      this.saveRoomsData(rooms);
+      return true;
     }
+    return false;
+  }
+
+  subscribe(callback) {
+    this.listeners.push(callback);
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== callback);
+    };
+  }
+
+  notifyListeners() {
+    this.listeners.forEach(cb => cb());
+  }
+
+  startPolling() {
+    // Verificar cambios cada 500ms
+    setInterval(() => {
+      this.notifyListeners();
+    }, 500);
   }
 }
 
-const p2pManager = new P2PManager();
+const roomManager = new OnlineRoomManager();
 
 // ─── UTILS ──────────────────────────────────────────────────────────
 function rollDie() { return Math.floor(Math.random() * 6) + 1; }
@@ -491,10 +478,10 @@ function HomeScreen({onStart, onOnline}) {
         <p style={{color:"#aabbcc",fontSize:"15px",marginBottom:"36px",letterSpacing:"3px"}}>CONQUISTA EL MUNDO</p>
         <div style={{display:"flex",gap:"12px",justifyContent:"center",flexWrap:"wrap"}}>
           <button onClick={onStart} style={{...btn("#8B0000","#cc2200"),fontSize:"18px",padding:"14px 40px",width:"auto"}}>
-            ⚔️ Jugar Local
+            ⚔️ Jugar
           </button>
           <button onClick={onOnline} style={{...btn("#003366","#1a7ccc"),fontSize:"18px",padding:"14px 40px",width:"auto"}}>
-            🌐 Online P2P
+            🌐 Online
           </button>
         </div>
         <div style={{marginTop:"36px",display:"flex",gap:"18px",justifyContent:"center",flexWrap:"wrap"}}>
@@ -510,51 +497,82 @@ function HomeScreen({onStart, onOnline}) {
   );
 }
 
-function P2PHomeScreen({onBack, onCreateRoom, onJoinRoom, myPeerId}) {
+function OnlineHomeScreen({onBack, onEnterRoom}) {
   const [playerName, setPlayerName] = useState("");
-  const [remotePeerId, setRemotePeerId] = useState("");
+  const [rooms, setRooms] = useState(roomManager.getAllRooms());
 
-  const handleCreateRoom = () => {
-    if (!playerName.trim()) { alert("Ingresa tu nombre"); return; }
-    onCreateRoom(playerName);
-  };
+  useEffect(() => {
+    const unsub = roomManager.subscribe(() => {
+      setRooms(roomManager.getAllRooms());
+    });
+    return unsub;
+  }, []);
 
-  const handleJoinRoom = () => {
+  const handleCreateOrJoin = (roomId) => {
     if (!playerName.trim()) { alert("Ingresa tu nombre"); return; }
-    if (!remotePeerId.trim()) { alert("Ingresa el ID del HOST"); return; }
-    onJoinRoom(playerName, remotePeerId);
+    
+    const room = roomManager.getRoomDetails(roomId);
+    const playerId = "p_" + Date.now();
+    
+    if (room.players.length === 0) {
+      // Crear sala como host
+      if (roomManager.createRoom(roomId, playerId, playerName)) {
+        onEnterRoom(playerId, playerName, roomId, true);
+      }
+    } else {
+      // Unirse a sala existente
+      if (roomManager.joinRoom(roomId, playerId, playerName)) {
+        onEnterRoom(playerId, playerName, roomId, false);
+      } else {
+        alert("No puedes unirte a esta sala (llena o en juego)");
+      }
+    }
   };
 
   return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px",background:"linear-gradient(135deg,#050d1a 0%,#0d2137 100%)"}}>
-      <div style={{background:"rgba(0,0,0,0.8)",border:"2px solid rgba(255,215,0,0.4)",borderRadius:"16px",padding:"32px",maxWidth:"600px",width:"100%"}}>
+      <div style={{background:"rgba(0,0,0,0.8)",border:"2px solid rgba(255,215,0,0.4)",borderRadius:"16px",padding:"32px",maxWidth:"700px",width:"100%"}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:"#556677",cursor:"pointer",fontSize:"13px",padding:0,marginBottom:"16px"}}>← Volver</button>
-        <h2 style={{color:"#FFD700",fontSize:"26px",fontFamily:"Georgia,serif",textAlign:"center",marginBottom:"24px"}}>🌐 Modo P2P</h2>
+        <h2 style={{color:"#FFD700",fontSize:"26px",fontFamily:"Georgia,serif",textAlign:"center",marginBottom:"24px"}}>🌐 Modo Online</h2>
         
-        <div style={{background:"rgba(255,215,0,0.08)",border:"1px solid rgba(255,215,0,0.2)",borderRadius:"8px",padding:"16px",marginBottom:"24px"}}>
-          <p style={{color:"#FFD700",fontSize:"12px",fontWeight:"bold",marginBottom:"8px"}}>Tu ID P2P:</p>
-          <p style={{color:"#88aaff",fontSize:"14px",wordBreak:"break-all",fontFamily:"monospace"}}>{myPeerId || "Conectando..."}</p>
-          <button onClick={() => myPeerId && navigator.clipboard.writeText(myPeerId)} style={{...btn("#003366","#1a7ccc"),marginTop:"8px",fontSize:"12px"}}>
-            📋 Copiar ID
-          </button>
-        </div>
-
         <input value={playerName} onChange={e=>setPlayerName(e.target.value)} maxLength={20} placeholder="Tu nombre"
-          style={{...inp,marginBottom:"16px"}}/>
-
-        <div style={{display:"flex",gap:"12px",marginBottom:"24px"}}>
-          <button onClick={handleCreateRoom} style={{...btn("#226600","#33aa00"),flex:1}}>
-            🔨 Crear Sala
-          </button>
-        </div>
-
-        <div style={{borderTop:"1px solid #334455",paddingTop:"16px"}}>
-          <p style={{color:"#aabbcc",fontSize:"12px",marginBottom:"8px"}}>O únete a una sala existente:</p>
-          <input value={remotePeerId} onChange={e=>setRemotePeerId(e.target.value)} placeholder="ID del HOST"
-            style={{...inp,marginBottom:"8px"}}/>
-          <button onClick={handleJoinRoom} style={{...btn("#003366","#1a7ccc")}}>
-            Unirse
-          </button>
+          style={{...inp,marginBottom:"24px"}}/>
+        
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px"}}>
+          {rooms.map((room, i) => {
+            const isFull = room.players.length >= 6;
+            const isEmpty = room.players.length === 0;
+            const isStarted = room.status === "started";
+            
+            return (
+              <div key={i} style={{background:"rgba(255,215,0,0.08)",border:"1px solid rgba(255,215,0,0.2)",borderRadius:"12px",padding:"16px",textAlign:"center"}}>
+                <p style={{color:"#FFD700",fontSize:"18px",fontWeight:"bold",marginBottom:"8px"}}>Sala {room.id}</p>
+                <p style={{color:"#888",fontSize:"13px",marginBottom:"12px"}}>
+                  {room.players.length}/6 jugadores
+                </p>
+                {room.players.length > 0 && (
+                  <div style={{background:"rgba(0,0,0,0.3)",borderRadius:"6px",padding:"8px",marginBottom:"12px",maxHeight:"80px",overflowY:"auto"}}>
+                    {room.players.map((p, j) => (
+                      <p key={j} style={{color:p.isHost?"#FFD700":"#ccc",fontSize:"11px",margin:"2px 0"}}>
+                        {p.isHost ? "👑" : "●"} {p.name}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <button 
+                  onClick={() => handleCreateOrJoin(room.id)}
+                  disabled={isFull || isStarted}
+                  style={{
+                    ...btn(isEmpty?"#226600":"#003366", isEmpty?"#33aa00":"#1a7ccc"),
+                    opacity: isFull || isStarted ? 0.5 : 1,
+                    cursor: isFull || isStarted ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {isEmpty ? "🔨 Crear" : isFull ? "Llena" : isStarted ? "En juego" : "Unirse"}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -562,31 +580,58 @@ function P2PHomeScreen({onBack, onCreateRoom, onJoinRoom, myPeerId}) {
 }
 
 // ─── ROOM LOBBY SCREEN ─────────────────────────────────────────────────
-function RoomLobbyScreen({roomId, playerName, isHost, players, onBack, onStartGame, onRemovePlayer}) {
+function RoomLobbyScreen({roomId, playerId, playerName, isHost, onBack, onStartGame}) {
+  const [roomDetails, setRoomDetails] = useState(null);
+
+  useEffect(() => {
+    const unsub = roomManager.subscribe(() => {
+      const details = roomManager.getRoomDetails(roomId);
+      setRoomDetails(details);
+    });
+    const details = roomManager.getRoomDetails(roomId);
+    setRoomDetails(details);
+    return unsub;
+  }, [roomId]);
+
+  if (!roomDetails) return <div style={{color:"#fff"}}>Cargando...</div>;
+
+  const handleRemovePlayer = (pId) => {
+    roomManager.removePlayer(roomId, pId);
+  };
+
+  const handleStartGame = () => {
+    if (roomDetails.players.length < 2) {
+      alert("Necesitas al menos 2 jugadores para comenzar");
+      return;
+    }
+    roomManager.startGame(roomId);
+    onStartGame();
+  };
+
   return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px",background:"linear-gradient(135deg,#050d1a 0%,#0d2137 100%)"}}>
       <div style={{background:"rgba(0,0,0,0.8)",border:"2px solid rgba(255,215,0,0.4)",borderRadius:"16px",padding:"32px",maxWidth:"600px",width:"100%"}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:"#556677",cursor:"pointer",fontSize:"13px",padding:0,marginBottom:"16px"}}>← Volver</button>
         
         <div style={{textAlign:"center",marginBottom:"24px"}}>
-          <h2 style={{color:"#FFD700",fontSize:"26px",fontFamily:"Georgia,serif",marginBottom:"8px"}}>Sala P2P</h2>
-          {isHost && <p style={{color:"#2ecc71",fontSize:"12px"}}>👑 Eres el HOST</p>}
-          <p style={{color:"#88aaff",fontSize:"11px",wordBreak:"break-all",fontFamily:"monospace",marginTop:"8px"}}>{roomId}</p>
+          <h2 style={{color:"#FFD700",fontSize:"26px",fontFamily:"Georgia,serif",marginBottom:"8px"}}>Sala {roomId}</h2>
+          <p style={{color:"#88aacc",fontSize:"14px"}}>Esperando jugadores...</p>
+          {isHost && <p style={{color:"#2ecc71",fontSize:"12px",marginTop:"4px"}}>👑 Eres el HOST</p>}
         </div>
 
         <div style={{background:"rgba(255,215,0,0.08)",border:"1px solid rgba(255,215,0,0.2)",borderRadius:"8px",padding:"16px",marginBottom:"16px"}}>
-          <p style={{color:"#FFD700",fontSize:"14px",fontWeight:"bold",marginBottom:"12px"}}>Jugadores ({players.length}/6):</p>
-          {players.map((p, i) => (
+          <p style={{color:"#FFD700",fontSize:"14px",fontWeight:"bold",marginBottom:"12px"}}>Jugadores ({roomDetails.players.length}/6):</p>
+          {roomDetails.players.map((player, i) => (
             <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(0,0,0,0.3)",borderRadius:"6px",padding:"10px",marginBottom:"8px"}}>
               <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
                 <span style={{color:PLAYER_COLORS[i],fontSize:"16px"}}>●</span>
                 <div>
-                  <p style={{color:"#fff",fontSize:"14px"}}>{p.name}</p>
-                  <p style={{color:"#888",fontSize:"11px"}}>{p.isHost ? "👑 HOST" : "Jugador"}</p>
+                  <p style={{color:"#fff",fontSize:"14px"}}>{player.name}</p>
+                  <p style={{color:"#888",fontSize:"11px"}}>{player.isHost ? "👑 HOST" : "Jugador"}</p>
                 </div>
               </div>
-              {isHost && !p.isHost && (
-                <button onClick={() => onRemovePlayer(p.peerId)} 
+              {isHost && !player.isHost && (
+                <button onClick={() => handleRemovePlayer(player.id)} 
                   style={{...btn("#cc2200","#ff3300"),width:"auto",padding:"4px 12px",fontSize:"11px"}}>
                   Expulsar
                 </button>
@@ -596,7 +641,8 @@ function RoomLobbyScreen({roomId, playerName, isHost, players, onBack, onStartGa
         </div>
 
         {isHost && (
-          <button onClick={onStartGame} style={{...btn("#226600","#33aa00")}}>
+          <button onClick={handleStartGame} 
+            style={{...btn("#226600","#33aa00")}}>
             ▶️ Iniciar Juego
           </button>
         )}
@@ -781,7 +827,7 @@ function AttackResultPanel({result}) {
   );
 }
 
-function GameScreen({initialPlayers, onBack}) {
+function GameScreen({initialPlayers, onBack, isOnline = false, roomId = null}) {
   const [gs, setGs] = useState(()=>initGame(initialPlayers));
   const [selectedFrom, setSelectedFrom] = useState(null);
   const [selectedTo, setSelectedTo] = useState(null);
@@ -800,6 +846,12 @@ function GameScreen({initialPlayers, onBack}) {
     const t = setTimeout(()=>setShowTurnBanner(false),2500);
     return ()=>clearTimeout(t);
   },[gs.currentPlayer]);
+
+  useEffect(() => {
+    if (isOnline && roomId) {
+      roomManager.updateGameState(roomId, gs);
+    }
+  }, [gs, isOnline, roomId]);
 
   const handleTerritoryClick = (clicked) => {
     if(gs.phase==="ended") return;
@@ -877,12 +929,14 @@ function GameScreen({initialPlayers, onBack}) {
             <p style={{color:"#aabbcc",fontSize:"13px",letterSpacing:"2px",marginBottom:"8px"}}>TURNO DE</p>
             <p style={{color:currentPlayer?.color||"#FFD700",fontSize:"32px",fontWeight:"bold",fontFamily:"Georgia,serif"}}>{currentPlayer?.name||"?"}</p>
             <p style={{color:"#556677",fontSize:"12px",marginTop:"8px"}}>Fase: {phaseLabel(gs.phase)}</p>
+            {isOnline && <p style={{color:"#88aaff",fontSize:"10px",marginTop:"6px"}}>🌐 Sala: {roomId}</p>}
           </div>
         </div>
       )}
 
       <div style={{background:"rgba(0,0,0,0.92)",borderBottom:"2px solid #FFD70055",padding:"7px 14px",display:"flex",alignItems:"center",gap:"14px",flexWrap:"wrap",flexShrink:0}}>
         <span style={{color:"#FFD700",fontFamily:"Georgia,serif",fontSize:"20px",fontWeight:"bold"}}>RISK</span>
+        {isOnline && <span style={{color:"#88aaff",fontSize:"12px"}}>🌐 Online - Sala {roomId}</span>}
         <div style={{display:"flex",gap:"5px",alignItems:"center",flexWrap:"wrap",flex:1}}>
           {gs.players.map(p=>{
             const tCount=Object.values(gs.territories).filter(t=>t.owner===p.id).length;
@@ -1009,78 +1063,41 @@ function GameScreen({initialPlayers, onBack}) {
 function App() {
   const [screen, setScreen] = useState("home");
   const [players, setPlayers] = useState(null);
-  const [myPeerId, setMyPeerId] = useState(null);
-  const [roomPlayers, setRoomPlayers] = useState([]);
-  const [isHost, setIsHost] = useState(false);
-
-  useEffect(() => {
-    const unsubStatus = p2pManager.subscribeToStatus((status, data) => {
-      if (status === 'open') {
-        setMyPeerId(p2pManager.peerId);
-      }
-    });
-
-    const unsubMessage = p2pManager.subscribeToBroadcast((peerId, data) => {
-      // Manejar mensajes P2P aquí
-      console.log('Mensaje de:', peerId, data);
-    });
-
-    return () => {
-      unsubStatus();
-      unsubMessage();
-    };
-  }, []);
-
-  const handleCreateRoom = (playerName) => {
-    setIsHost(true);
-    setRoomPlayers([{ name: playerName, peerId: p2pManager.peerId, isHost: true }]);
-    setScreen("room-lobby");
-  };
-
-  const handleJoinRoom = (playerName, hostPeerId) => {
-    p2pManager.connect(hostPeerId);
-    setIsHost(false);
-    setRoomPlayers([{ name: playerName, peerId: p2pManager.peerId, isHost: false }]);
-    setScreen("room-lobby");
-  };
-
-  const handleRemovePlayer = (peerId) => {
-    setRoomPlayers(p => p.filter(pl => pl.peerId !== peerId));
-  };
-
-  const handleStartGame = () => {
-    const gamePlayers = roomPlayers.map((p, i) => ({
-      id: "p" + i,
-      name: p.name,
-      color: PLAYER_COLORS[i]
-    }));
-    setPlayers(gamePlayers);
-    setScreen("game");
-  };
+  const [onlineSession, setOnlineSession] = useState(null);
 
   if(screen==="home") return <HomeScreen 
     onStart={()=>setScreen("setup")}
-    onOnline={()=>setScreen("p2p-home")}
+    onOnline={()=>setScreen("online-home")}
   />;
   
-  if(screen==="p2p-home") return <P2PHomeScreen 
+  if(screen==="online-home") return <OnlineHomeScreen 
     onBack={()=>setScreen("home")}
-    onCreateRoom={handleCreateRoom}
-    onJoinRoom={handleJoinRoom}
-    myPeerId={myPeerId}
+    onEnterRoom={(playerId, playerName, roomId, isHost)=>{
+      setOnlineSession({playerId, playerName, roomId, isHost});
+      setScreen("room-lobby");
+    }}
   />;
 
-  if(screen==="room-lobby") return <RoomLobbyScreen
-    roomId={myPeerId}
-    playerName={roomPlayers[0]?.name}
-    isHost={isHost}
-    players={roomPlayers}
+  if(screen==="room-lobby" && onlineSession) return <RoomLobbyScreen
+    roomId={onlineSession.roomId}
+    playerId={onlineSession.playerId}
+    playerName={onlineSession.playerName}
+    isHost={onlineSession.isHost}
     onBack={()=>{
-      setRoomPlayers([]);
-      setScreen("p2p-home");
+      roomManager.leaveRoom(onlineSession.roomId, onlineSession.playerId);
+      setOnlineSession(null);
+      setScreen("online-home");
     }}
-    onStartGame={handleStartGame}
-    onRemovePlayer={handleRemovePlayer}
+    onStartGame={()=>{
+      const roomDetails = roomManager.getRoomDetails(onlineSession.roomId);
+      const gamePlayers = roomDetails.players.map((p, i) => ({
+        id: "p" + i,
+        name: p.name,
+        color: PLAYER_COLORS[i]
+      }));
+      setPlayers(gamePlayers);
+      setScreen("online-game");
+    }}
   />;
   
   if(screen==="setup") return <SetupScreen 
@@ -1091,6 +1108,18 @@ function App() {
   if(screen==="game"&&players) return <GameScreen 
     initialPlayers={players} 
     onBack={()=>{setPlayers(null);setScreen("home");}}
+  />;
+  
+  if(screen==="online-game"&&players && onlineSession) return <GameScreen 
+    initialPlayers={players}
+    onBack={()=>{
+      roomManager.leaveRoom(onlineSession.roomId, onlineSession.playerId);
+      setOnlineSession(null);
+      setPlayers(null);
+      setScreen("home");
+    }}
+    isOnline={true}
+    roomId={onlineSession.roomId}
   />;
   
   return null;
